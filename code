@@ -1,0 +1,88 @@
+library(Hmsc)
+library(corrplot)
+library(vegan)
+library(parallel)
+
+data_wide <- read.csv("data_wide_abundance.csv")
+
+species_start_col <- 7  
+Y_raw <- as.matrix(data_wide[, species_start_col:ncol(data_wide)])
+
+non_zero_species <- colSums(Y_raw) > 0
+Y <- Y_raw[, non_zero_species]
+
+env_data <- data.frame(
+  depth = data_wide[[2]],
+  temp = data_wide[[3]],  
+  salinity = data_wide[[4]]
+)
+
+xy_coords <- as.matrix(data.frame(
+  longitude = data_wide[[5]],
+  latitude = data_wide[[6]]
+))
+
+lon_range <- diff(range(xy_coords[,1]))
+lat_range <- diff(range(xy_coords[,2]))
+xy_coords[,1] <- xy_coords[,1] + runif(nrow(xy_coords), -lon_range/10000, lon_range/10000)
+xy_coords[,2] <- xy_coords[,2] + runif(nrow(xy_coords), -lat_range/10000, lat_range/10000)
+
+n <- nrow(Y)
+studyDesign <- data.frame(
+  sample = as.factor(paste0("sample_", 1:n)),
+  spatial = as.factor(paste0("site_", 1:n))
+)
+
+rownames(xy_coords) <- levels(studyDesign$spatial)
+rL_spatial <- HmscRandomLevel(sData = xy_coords)
+
+XFormula1 <- ~ salinity + temp
+m1 <- Hmsc(Y = Y, 
+           XData = env_data, 
+           XFormula = XFormula1,
+           distr = "lognormal poisson")
+
+XFormula2 <- ~ salinity + temp + I(temp^2)
+m2 <- Hmsc(Y = Y, 
+           XData = env_data, 
+           XFormula = XFormula2,
+           distr = "lognormal poisson")
+
+XFormula3 <- ~ 1
+m3 <- Hmsc(Y = Y, 
+           XData = env_data, 
+           XFormula = XFormula3,
+           studyDesign = studyDesign,
+           ranLevels = list(spatial = rL_spatial),
+           distr = "lognormal poisson")
+
+m4 <- Hmsc(Y = Y, 
+           XData = env_data, 
+           XFormula = XFormula1,
+           studyDesign = studyDesign,
+           ranLevels = list(spatial = rL_spatial),
+           distr = "lognormal poisson")
+
+m5 <- Hmsc(Y = Y, 
+           XData = env_data, 
+           XFormula = XFormula2,
+           studyDesign = studyDesign,
+           ranLevels = list(spatial = rL_spatial),
+           distr = "lognormal poisson")
+
+nChains <- 4
+thin <- 3
+samples <- 2000
+transient <- 500
+verbose <- 5000
+
+models <- list(m1, m2, m3, m4, m5)
+for (i in 1:5) {
+   models[[i]] <- sampleMcmc(models[[i]], 
+                            thin = thin,
+                            samples = samples,
+                            transient = transient,
+                            nChains = nChains,
+                            nParallel = nChains,
+                            verbose = verbose)
+}
